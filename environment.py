@@ -11,6 +11,7 @@ class environment:
         self.rule2index = {}
         self.states_bookmarked = None # Contains one_hot encoding of the bookmarked state for a file/user
         self.states_bookmarked_idx = {} #Contains the file_name: [indices of the bookmarked states]
+        self.check_all_bookmark = {} #in each episode it will store the bookmarked states predicted.
         self.input_dim = None
         self.states_temp = []
 
@@ -103,7 +104,7 @@ class environment:
 
     # // The following function will convert the vegalite encoding into a one-hot vector
     def encode2(self, sentence):
-        one_hot = np.zeros(self.input_dim, dtype=np.float)
+        one_hot = np.zeros(self.input_dim, dtype=np.int)
         # try: 
         #     json_obj = json.loads(sentence.replace('\n', '').replace(' ', ''))
         # except AttributeError as e:
@@ -141,9 +142,10 @@ class environment:
     
     def reset(self):
         self.idx = 0
+        self.check_all_bookmark = {}
         return self.states[0]
 
-    def step(self, action):
+    def step(self, state, action):
         reward = 0
         # print("taken action: ", action)
         if np.array_equal(action, self.actions[self.idx]): #action == self.actions[self.idx]:
@@ -153,6 +155,35 @@ class environment:
             return self.states[self.idx + 1], reward, True
         else:
             return self.states[self.idx], reward, False #s_prime, reward, done 
+
+    def step_test(self, state, action):
+
+        # For evaluation: We want to see if the taken action results in a state in the bookmarked state
+        reward = 0
+        # print("prev", state)
+        state[action] = 1 - state[action]
+        # print(action, state)
+        # print(self.states_bookmarked.shape)
+        # print(state.shape)
+        if np.array_equal(action, self.actions[self.idx]): #action == self.actions[self.idx]:
+            # print(action)
+            reward = self.reward[self.idx]
+        
+        if np.any(np.all(state == self.states_bookmarked, axis=1)):
+            hash_bookmarked_state = state.tobytes()
+            print(state)
+            self.check_all_bookmark[hash_bookmarked_state] = 1
+
+        done = False
+        if(len(self.check_all_bookmark) == len(self.states_bookmarked)):
+            print("ever")
+            done = True
+
+        self.idx += 1
+        if self.idx + 2 == len(self.states):
+            return self.states[self.idx + 1], reward, True
+        else:
+            return self.states[self.idx], reward, done #s_prime, reward, done 
 
 # if __name__ == "__main__":    
     def make(self, filename):
@@ -186,7 +217,7 @@ class environment:
     def make2(self, filename_log, bookmark_idx):
         # print(bookmark_idx)
         self.set_rules()
-        temp = [] # for putting the bookmarked visualizations one-hot encoding
+        temp = np.empty((0,47), int) # for putting the bookmarked visualizations one-hot encoding
         with open(filename_log, "r") as input:
             json_list = json.load(input)  # Load the entire list from the file
             for idx, entry in enumerate(json_list):
@@ -194,37 +225,14 @@ class environment:
                 self.states_temp.append(one_hot_state)
                 if(idx in bookmark_idx):
                     # print(entry)
-                    temp.append(one_hot_state)
+                    # temp.append(one_hot_state)
+                    temp = np.vstack((temp, one_hot_state))
+        # print(temp)
         # pdb.set_trace()
-        self.states_bookmarked = np.asarray(temp)
-        pdb.set_trace()
+        self.states_bookmarked = temp
         #Converts the continous state-action space to discrete state-action space
-       
-        
-    def create_env2(self):
-        length = len(self.states_temp)
-        for idx in range(length - 1):  
-            # print("Current {}".format([idx for idx, value in enumerate(self.states_temp[idx]) if value == 1]))          
-            indices = self.find_action(self.states_temp[idx], self.states_temp[idx + 1])
-            # print("Target {}".format([idx for idx, value in enumerate(self.states_temp[idx + 1]) if value == 1]))
-            cur_state = self.states_temp[idx]
-            self.states.append(np.copy(cur_state))
-            flag = True
-            for i, indice in enumerate(indices):
-                flag = False
-                cur_state[indice] = 1 - cur_state[indice]
-                
-                self.actions.append(indice)
-                if i == len(indices) - 1:
-                    self.reward.append(1)
-                else:
-                    self.states.append(np.copy(cur_state))
-                    # print([idx2 for idx2, value in enumerate(self.states[len(self.states) - 1]) if value == 1])
-                    self.reward.append(0)
-                    # pdb.set_trace()
-                # cur_state = new_state
-            if(flag):
-                self.states.pop()
+        self.create_env()
+
         
     def load_bookmarks(self):
         filename = os.path.join(os.getcwd() + '/interactions/Modified/bookmark_info.txt')
@@ -236,35 +244,19 @@ class environment:
                 parts = line.split(';')
                 # print(parts[1])
                 filename, values = parts[0], parts[1].strip('[]')
-                print(filename, values)
+                # print(filename, values)
                 values = [int(value) for value in values.split(',')]
                 self.states_bookmarked_idx[filename] = values
         
-        # print(self.states_bookmarked)
-    
+
 if __name__ == "__main__":
     filenames = os.listdir(os.getcwd() + '/interactions/Modified')
-    file_paths = [os.path.join(os.getcwd() + '/interactions/Modified', filename) for filename in filenames]
-    # Create dictionaries to group filenames by prefix and file type (bookmarked or logs)
-    file_groups = {"bookmarked": {}, "logs": {}}
-
-    # Iterate through the filenames
-    for filename in filenames:
-        # Extract the prefix before "_ace"
-        prefix = filename.split('_ace')[0]
-        # Determine the file type (bookmarked or logs)
-        file_type = "bookmarked" if "bookmarked" in filename else "logs"
-        file_groups[file_type][prefix] = str(filename)
-        
+    file_paths = [filename for filename in filenames if "logs" in filename]
+    
     # Print the filenames with the same prefix together for "bookmarked" and "logs"
-    for prefix in file_groups["bookmarked"]:
-        # bookmarked_files = file_groups["bookmarked"][prefix]
-        logs_files = file_groups["logs"].get(prefix, [])
-        # print(logs_files)
+    for fname in file_paths:
         env = environment()
         env.load_bookmarks()
-        # pdb.set_trace()
-        # print(logs_files, bookmarked_files)
-        # print(os.path.join(os.getcwd() + '/interactions/Modified', logs_files))
-        env.make2(os.path.join(os.getcwd() + '/interactions/Modified', logs_files), env.states_bookmarked_idx[logs_files])
-        # print()
+        full_fname = os.path.join(os.getcwd() + '/interactions/Modified', fname)
+        # print(full_fname, env.states_bookmarked_idx[fname])
+        env.make2(full_fname, env.states_bookmarked_idx[fname])

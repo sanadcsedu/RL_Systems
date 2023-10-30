@@ -24,7 +24,7 @@ class ActorCritic(nn.Module):
     def __init__(self):
         super(ActorCritic, self).__init__()
         self.fc1 = nn.Linear(47, 128)
-        self.fc_pi = nn.Linear(128, 64)
+        self.fc_pi = nn.Linear(128, 47)
         self.fc_v = nn.Linear(128, 1)
 
     def pi(self, x, softmax_dim=0):
@@ -46,7 +46,9 @@ def train(fname, global_model, rank):
     optimizer = optim.Adam(global_model.parameters(), lr=learning_rate)
 
     env = environment()
-    env.make(fname)
+    env.load_bookmarks()
+    full_fname = os.path.join(os.getcwd() + '/interactions/Modified', fname)
+    env.make2(full_fname, env.states_bookmarked_idx[fname])
 
     for n_epi in range(max_train_ep):
         done = False
@@ -58,9 +60,9 @@ def train(fname, global_model, rank):
                 prob = local_model.pi(torch.from_numpy(s).float())
                 m = Categorical(prob)
                 a = m.sample().item()
-                # print(m)
+                # print(len(s), m)
                 # s_prime, r, done, truncated, info = env.step(a)
-                s_prime, r, done = env.step(a)
+                s_prime, r, done = env.step(s, a)
 
                 s_lst.append(s)
                 a_lst.append([a])
@@ -109,9 +111,13 @@ def train(fname, global_model, rank):
 
 def test(fname, global_model):
     env = environment()
-    print("Maximum Achievable Reward", env.make(fname))
+    env.load_bookmarks()
+    full_fname = os.path.join(os.getcwd() + '/interactions/Modified', fname)
+    # print("Maximum Achievable Reward", env.make2(full_fname, env.states_bookmarked_idx[fname]))
+    env.make2(full_fname, env.states_bookmarked_idx[fname])
     score = 0.0
     print_interval = 20
+    num_steps = 0.0 #finding out how many steps you need to find the desired bookmarks
 
     for n_epi in range(max_test_ep):
         done = False
@@ -121,27 +127,29 @@ def test(fname, global_model):
             prob = global_model.pi(torch.from_numpy(s).float())
             a = Categorical(prob).sample().item()
             # s_prime, r, done, truncated, info = env.step(a)
-            s_prime, r, done = env.step(a)
+            s_prime, r, done = env.step_test(s, a)
 
             s = s_prime
             score += r
+            num_steps += 1
 
         if n_epi % print_interval == 0 and n_epi != 0:
-            print("# of episode :{}, avg score : {:.1f}".format(
-                n_epi, score/print_interval))
+            print("# of episode :{}, avg score : {:.1f} avg steps: {:.1f}".format(
+                n_epi, score/print_interval, num_steps/print_interval))
             score = 0.0
+            num_steps = 0
             time.sleep(1)
     # env.close()
 
-
 if __name__ == '__main__':
 
-    filenames = os.listdir(os.getcwd() + '/interactions/')
-    file_paths = [os.path.join(os.getcwd() + '/interactions/', filename) for filename in filenames]
+    filenames = os.listdir(os.getcwd() + '/interactions/Modified')
+    # file_paths = [os.path.join(os.getcwd() + '/interactions/', filename) for filename in filenames]
+    file_paths = [filename for filename in filenames if "logs" in filename]
+
     global_model = ActorCritic()
     global_model.share_memory()
     for fname in file_paths:
-        print(fname)
         processes = []
         for rank in range(n_train_processes + 1):  # + 1 for test process
             if rank == 0:
